@@ -1,0 +1,11 @@
+target/
+.forge/
+*.class
+.DS_Store
+.idea/
+.vscode/
+examples/**/build/
+examples/**/dist/
+examples/**/target/
+examples/**/.zig-cache/
+examples/**/zig-out/
