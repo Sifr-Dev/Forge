@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "targets": [
+    {
+      "id": "generate",
+      "adapter": "exec",
+      "argv": ["/bin/sh", "-c", "printf 'generated from declared input\\n' > generated.txt"],
+      "inputs": ["input.txt"],
+      "outputs": ["generated.txt"]
+    },
+    {
+      "id": "verify",
+      "adapter": "exec",
+      "argv": ["/bin/sh", "-c", "cmp generated.txt expected.txt"],
+      "dependsOn": ["generate"],
+      "inputs": ["generated.txt", "expected.txt"],
+      "outputs": []
+    }
+  ]
+}

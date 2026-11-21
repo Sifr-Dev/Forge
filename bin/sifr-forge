@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+set -eu
+# Locate a packaged jar relative to this launcher or from an explicit install.
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+FORGE_HOME=${FORGE_HOME:-"$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"}
+JAR=${FORGE_JAR:-"$FORGE_HOME/target/sifr-forge.jar"}
+if [ ! -f "$JAR" ]; then
+  printf '%s\n' "Forge jar not found: $JAR. Run 'mvn package' or set FORGE_JAR." >&2
+  exit 2
+fi
+exec "${JAVA_HOME:+$JAVA_HOME/bin/}java" -jar "$JAR" "$@"
