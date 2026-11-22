@@ -14,7 +14,17 @@ public final class Main {
             Path manifestPath = Path.of(args[1]);
             Manifest manifest = ManifestParser.parse(manifestPath);
             BuildPlan plan = BuildPlan.create(manifest);
-            List<String> targets = Arrays.asList(args).subList(2, args.length);
+            List<String> rest = new ArrayList<>(Arrays.asList(args).subList(2, args.length));
+            int jobs = Math.min(Runtime.getRuntime().availableProcessors(), 8);
+            for (int i = 0; i < rest.size(); i++) {
+                String value = rest.get(i);
+                if (value.equals("--jobs") && i + 1 < rest.size()) {
+                    jobs = parseJobs(rest.get(++i)); rest.remove(i); rest.remove(i - 1); i -= 2;
+                } else if (value.startsWith("--jobs=")) {
+                    jobs = parseJobs(value.substring("--jobs=".length())); rest.remove(i); i--;
+                }
+            }
+            List<String> targets = List.copyOf(rest);
             switch (command) {
                 case "plan" -> {
                     for (Target target : plan.selection(targets)) {
@@ -32,7 +42,7 @@ public final class Main {
                     }
                 }
                 case "run" -> {
-                    var results = new ForgeRunner(new ProcessExecutor()).run(plan, targets);
+                    var results = new ForgeRunner(new ProcessExecutor(), jobs).run(plan, targets, jobs);
                     boolean failed = false;
                     for (var result : results) {
                         System.out.printf("%s %s %s%n", result.id(), result.status(), result.detail());
@@ -45,5 +55,15 @@ public final class Main {
             return 0;
         } catch (ForgeException | IllegalArgumentException e) { System.err.println("sifr-forge: " + e.getMessage()); return 2; }
     }
-    private static void usage() { System.out.println("usage: sifr-forge plan|run|graph|why MANIFEST [TARGET ...]"); }
+    private static int parseJobs(String text) {
+        try {
+            int value = Integer.parseInt(text);
+            if (value < 1) throw new NumberFormatException();
+            return value;
+        } catch (NumberFormatException e) { throw new IllegalArgumentException("--jobs must be a positive integer"); }
+    }
+
+    private static void usage() {
+        System.out.println("usage: sifr-forge plan|run|graph|why MANIFEST [TARGET ...] [--jobs N]");
+    }
 }

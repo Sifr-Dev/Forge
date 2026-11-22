@@ -58,7 +58,8 @@ public final class LocalCache {
                     try {
                         Files.copy(output, temporary);
                         if (!Hashing.file(temporary).sha256().equals(hash)) throw new ForgeException("cache copy failed integrity check");
-                        Files.move(temporary, blob, StandardCopyOption.ATOMIC_MOVE);
+                        // Parallel workers may publish the same content hash at once.
+                        Files.move(temporary, blob, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
                     } finally { Files.deleteIfExists(temporary); }
                 }
                 outputs.put(declared.toString(), hash);
@@ -69,7 +70,8 @@ public final class LocalCache {
             Files.createDirectories(root);
             Path temporary = root.resolve(fingerprint + ".tmp-" + UUID.randomUUID());
             try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) { properties.store(writer, "Forge successful output record"); }
-            Files.move(temporary, root.resolve(fingerprint + ".properties"), StandardCopyOption.ATOMIC_MOVE);
+            Files.move(temporary, root.resolve(fingerprint + ".properties"),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) { throw new ForgeException("cannot publish cache entry", e); }
     }
 

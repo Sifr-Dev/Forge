@@ -49,7 +49,9 @@ public final class FingerprintCalculator {
             hashPath(path, declared, declared.toString(), inputDigest, inputs);
         }
         var environment = new TreeMap<String, String>();
-        for (String name : target.envAllowlist()) {
+        var allowlist = new java.util.TreeSet<>(target.envAllowlist());
+        allowlist.addAll(Adapters.requiredEnvironment(target.adapter()));
+        for (String name : allowlist) {
             String value = System.getenv(name);
             if (value != null) {
                 environment.put(name, value);
