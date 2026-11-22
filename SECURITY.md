@@ -7,3 +7,12 @@ Inputs cannot use absolute paths, `..` escapes or symbolic links. Commands are a
 The local cache checks content hashes before restoring declared outputs. This detects accidental or tested corruption, not a malicious actor able to modify both content and metadata. Cache entries are published only after successful execution and output verification. Failure and timeout results are not cached.
 
 No remote cache or distributed execution is implemented. No cryptographic provenance claim is made merely from hashing inputs.
+
+## Child process environment
+
+The child environment is cleared and rebuilt from `PATH`, the adapter's
+required toolchain variables (`HOME`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`,
+`TMPDIR`), the target allowlist and explicit `env`. Nothing else from the
+parent leaks, and the resulting map is fingerprinted. This is an environment
+boundary, not a security sandbox: the child can read anything the user can
+read.

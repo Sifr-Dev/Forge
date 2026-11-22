@@ -19,7 +19,9 @@ public final class ProcessExecutor {
         if (!cwd.startsWith(manifest.projectRoot()) || !Files.isDirectory(cwd)) throw new ForgeException("invalid working directory " + cwd);
         builder.directory(cwd.toFile());
         builder.environment().clear();
-        for (String name : target.envAllowlist()) {
+        var allowlist = new java.util.TreeSet<>(target.envAllowlist());
+        allowlist.addAll(Adapters.requiredEnvironment(target.adapter()));
+        for (String name : allowlist) {
             String value = System.getenv(name);
             if (value != null) builder.environment().put(name, value);
         }
