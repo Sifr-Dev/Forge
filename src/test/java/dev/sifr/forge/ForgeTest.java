@@ -43,6 +43,34 @@ class ForgeTest {
         assertEquals("second", Files.readString(temp.resolve("out-a.txt")));
     }
 
+    @Test void interruptedExecutionTerminatesChildProcess() throws Exception {
+        Manifest m = manifest(target("interruptible", "\"/bin/sh\",\"-c\",\"sleep 30\"", ",\"timeout\":\"30s\""));
+        ProcessExecutor executor = new ProcessExecutor();
+        Thread worker = new Thread(() -> {
+            try {
+                executor.run(m, m.targets().get("interruptible"));
+                throw new AssertionError("execution unexpectedly completed");
+            } catch (ForgeException expected) {
+                // The interruption is the expected result; the child must not survive.
+            }
+        });
+        worker.start();
+        Thread.sleep(250);
+        worker.interrupt();
+        worker.join(10_000);
+        assertFalse(worker.isAlive(), "interrupted worker did not finish");
+        long deadline = System.nanoTime() + 10_000_000_000L;
+        boolean stillRunning;
+        do {
+            stillRunning = ProcessHandle.allProcesses()
+                    .filter(process -> process.info().command().orElse("").equals("/bin/sleep"))
+                    .anyMatch(process -> process.info().commandLine().orElse("").equals("/bin/sleep 30"));
+            if (!stillRunning) break;
+            Thread.sleep(50);
+        } while (System.nanoTime() < deadline);
+        assertFalse(stillRunning, "sleep process survived interrupted execution");
+    }
+
     @Test void failedAndTimedOutTargetsAreNeverCached() throws Exception {
         Manifest failure = manifest(target("bad", "\"/bin/sh\",\"-c\",\"printf incomplete > out-bad.txt; exit 7\"", ""));
         var result = new ForgeRunner(new ProcessExecutor()).run(BuildPlan.create(failure), List.of()).getFirst();

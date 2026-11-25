@@ -27,12 +27,15 @@ public final class ProcessExecutor {
         }
         builder.environment().putAll(target.env());
         long start = System.nanoTime();
+        Process process = null;
         try {
-            Process process = builder.start();
+            process = builder.start();
+            final Process child = process;
             StringBuilder stdout = new StringBuilder(), stderr = new StringBuilder();
-            try (ExecutorService drain = Executors.newVirtualThreadPerTaskExecutor()) {
-                Future<?> out = drain.submit(() -> drain(process.getInputStream(), stdout));
-                Future<?> err = drain.submit(() -> drain(process.getErrorStream(), stderr));
+            ExecutorService drain = Executors.newVirtualThreadPerTaskExecutor();
+            try {
+                Future<?> out = drain.submit(() -> drain(child.getInputStream(), stdout));
+                Future<?> err = drain.submit(() -> drain(child.getErrorStream(), stderr));
                 boolean exited = process.waitFor(target.timeout().toMillis(), TimeUnit.MILLISECONDS);
                 if (!exited) {
                     process.descendants().forEach(ProcessHandle::destroyForcibly);
@@ -41,14 +44,29 @@ public final class ProcessExecutor {
                 }
                 out.get(5, TimeUnit.SECONDS); err.get(5, TimeUnit.SECONDS);
                 return new Result(exited ? process.exitValue() : -1, !exited, stdout.toString(), stderr.toString(), Duration.ofNanos(System.nanoTime() - start));
+            } finally {
+                drain.shutdownNow();
             }
         } catch (IOException e) {
             throw new ForgeException("cannot execute " + String.join(" ", command.argv()) + ": " + e.getMessage(), e);
         } catch (InterruptedException e) {
+            terminate(process);
             Thread.currentThread().interrupt();
             throw new ForgeException("interrupted while executing " + target.id(), e);
         } catch (ExecutionException | TimeoutException e) {
+            terminate(process);
             throw new ForgeException("cannot drain process output for " + target.id(), e);
+        }
+    }
+
+    private static void terminate(Process process) {
+        if (process == null || !process.isAlive()) return;
+        process.descendants().forEach(ProcessHandle::destroyForcibly);
+        process.destroyForcibly();
+        try {
+            process.waitFor(5, TimeUnit.SECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 
