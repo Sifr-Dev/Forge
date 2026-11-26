@@ -154,4 +154,71 @@ class ForgeTest {
         }
         assertEquals(ForgeRunner.Status.FAILED, runner.run(BuildPlan.create(m), List.of()).getFirst().status());
     }
+
+    /**
+     * A target-local setup failure (here: an executable that does not exist,
+     * the normal shape of a missing toolchain) must fail only that target.
+     * Before the fix the ForgeException escaped the worker, aborted the whole
+     * run with exit code 2, discarded the independent sibling and never
+     * reported the dependent as SKIPPED.
+     */
+    @Test void unspawnableExecutableFailsOnlyThatTargetAndKeepsSiblings() throws Exception {
+        Manifest m = ManifestParser.parse("{\"version\":1,\"targets\":["
+                + "{\"id\":\"missing-toolchain\",\"adapter\":\"exec\",\"argv\":[\"/nonexistent/compiler-xyz\"],\"outputs\":[]},"
+                + "{\"id\":\"sibling\",\"adapter\":\"exec\",\"argv\":[\"/bin/sh\",\"-c\",\"printf s > out-sibling.txt\"],\"outputs\":[\"out-sibling.txt\"]},"
+                + "{\"id\":\"dependent\",\"adapter\":\"exec\",\"argv\":[\"/bin/sh\",\"-c\",\"printf d > out-dependent.txt\"],\"dependsOn\":[\"missing-toolchain\"],\"outputs\":[\"out-dependent.txt\"]}]}", temp);
+        var results = new ForgeRunner(new ProcessExecutor(), 3).run(BuildPlan.create(m), List.of());
+        var byId = new HashMap<String, ForgeRunner.Result>();
+        results.forEach(result -> byId.put(result.id(), result));
+
+        assertEquals(ForgeRunner.Status.FAILED, byId.get("missing-toolchain").status());
+        assertTrue(byId.get("missing-toolchain").detail().contains("compiler-xyz"),
+                "the failure detail must name the executable: " + byId.get("missing-toolchain").detail());
+        assertEquals(ForgeRunner.Status.SUCCEEDED, byId.get("sibling").status(),
+                "an unrelated target must still run when another target cannot start");
+        assertEquals(ForgeRunner.Status.SKIPPED, byId.get("dependent").status());
+        assertTrue(Files.isRegularFile(temp.resolve("out-sibling.txt")), "the sibling's output must exist");
+        assertFalse(Files.exists(temp.resolve("out-dependent.txt")), "a skipped target must not run");
+    }
+
+    /** A declared input that does not exist is target-local too, not a whole-build abort. */
+    @Test void missingDeclaredInputFailsOnlyThatTarget() throws Exception {
+        Manifest m = ManifestParser.parse("{\"version\":1,\"targets\":["
+                + "{\"id\":\"needs-input\",\"adapter\":\"exec\",\"argv\":[\"/bin/true\"],\"inputs\":[\"absent.txt\"]},"
+                + "{\"id\":\"independent\",\"adapter\":\"exec\",\"argv\":[\"/bin/sh\",\"-c\",\"printf i > out-independent.txt\"],\"outputs\":[\"out-independent.txt\"]}]}", temp);
+        var results = new ForgeRunner(new ProcessExecutor(), 2).run(BuildPlan.create(m), List.of());
+        var byId = new HashMap<String, ForgeRunner.Result>();
+        results.forEach(result -> byId.put(result.id(), result));
+        assertEquals(ForgeRunner.Status.FAILED, byId.get("needs-input").status());
+        assertEquals(ForgeRunner.Status.SUCCEEDED, byId.get("independent").status());
+    }
+
+    /**
+     * Two outputs with identical bytes share one content-addressed blob, so a
+     * blob cannot carry permission bits. Restoring from cache used to copy the
+     * bytes and lose the executable bit, which broke any later target that
+     * executes the restored file.
+     */
+    @Test void cacheRestorePreservesExecutablePermission() throws Exception {
+        Manifest m = ManifestParser.parse("{\"version\":1,\"targets\":["
+                + "{\"id\":\"script\",\"adapter\":\"exec\",\"argv\":[\"/bin/sh\",\"-c\",\"printf '#!/bin/sh\\\\necho hi\\\\n' > out-script\"],\"outputs\":[\"out-script\"]},"
+                + "{\"id\":\"executable\",\"adapter\":\"exec\",\"argv\":[\"/bin/sh\",\"-c\",\"cp out-script out-executable && chmod 755 out-executable\"],\"dependsOn\":[\"script\"],\"outputs\":[\"out-executable\"]}]}", temp);
+        var runner = new ForgeRunner(new ProcessExecutor(), 2);
+        runner.run(BuildPlan.create(m), List.of());
+        Path executable = temp.resolve("out-executable");
+        assertTrue(Files.isExecutable(executable), "cold build should produce an executable");
+        // Identical content must collapse to a single blob, which is exactly why
+        // the mode has to live in the entry rather than on the blob.
+        try (var blobs = Files.list(temp.resolve(".forge/cache/blobs"))) {
+            assertEquals(1, blobs.count(), "identical outputs should share one blob");
+        }
+        Files.delete(executable);
+        Files.delete(temp.resolve("out-script"));
+
+        var warm = runner.run(BuildPlan.create(m), List.of());
+        assertEquals(ForgeRunner.Status.CACHE_HIT, warm.get(1).status());
+        assertTrue(Files.isExecutable(executable), "cache restore must preserve the executable bit");
+        assertFalse(Files.isExecutable(temp.resolve("out-script")),
+                "the non-executable output must not inherit the executable's mode");
+    }
 }
