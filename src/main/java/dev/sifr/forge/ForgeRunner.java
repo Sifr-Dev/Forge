@@ -126,24 +126,41 @@ public final class ForgeRunner {
         }
     }
 
+    /**
+     * Runs one target in isolation. A {@link ForgeException} here is a
+     * target-local failure (unspawnable executable, missing declared input,
+     * unusable output path) and must not abort the build: it becomes a
+     * {@code FAILED} result so dependents are skipped and unrelated targets in
+     * flight keep running. Only cancellation (the worker thread is already
+     * interrupted) still aborts. An unexpected runtime exception is an engine
+     * defect and still aborts.
+     */
     private Result executeOne(BuildPlan plan, Target target) throws ForgeException {
-        var calculator = new FingerprintCalculator(plan.manifest());
-        var cache = new LocalCache(plan.manifest().projectRoot());
-        String fingerprint = calculator.fingerprint(target.id());
-        LocalCache.Lookup lookup = cache.lookup(plan.manifest(), target, fingerprint);
-        if (lookup.status() == LocalCache.Status.HIT) {
-            cache.restore(plan.manifest(), target, lookup.entry());
-            return new Result(target.id(), Status.CACHE_HIT, fingerprint, 0, "restored verified outputs");
+        String fingerprint = null;
+        try {
+            var calculator = new FingerprintCalculator(plan.manifest());
+            var cache = new LocalCache(plan.manifest().projectRoot());
+            fingerprint = calculator.fingerprint(target.id());
+            LocalCache.Lookup lookup = cache.lookup(plan.manifest(), target, fingerprint);
+            if (lookup.status() == LocalCache.Status.HIT) {
+                cache.restore(plan.manifest(), target, lookup.entry());
+                return new Result(target.id(), Status.CACHE_HIT, fingerprint, 0, "restored verified outputs");
+            }
+            if (lookup.status() == LocalCache.Status.CORRUPT) {
+                return new Result(target.id(), Status.FAILED, fingerprint, -1, "cache integrity check failed");
+            }
+            var execution = executor.run(plan.manifest(), target);
+            if (execution.timedOut()) return new Result(target.id(), Status.TIMEOUT, fingerprint, -1, execution.stderr());
+            if (execution.exitCode() != 0) {
+                return new Result(target.id(), Status.FAILED, fingerprint, execution.exitCode(), execution.stderr());
+            }
+            cache.publish(plan.manifest(), target, fingerprint);
+            return new Result(target.id(), Status.SUCCEEDED, fingerprint, 0, execution.stdout());
+        } catch (ForgeException failure) {
+            // Cancellation is not a target failure: it must stop the build.
+            if (Thread.currentThread().isInterrupted()) throw failure;
+            String detail = failure.getMessage() == null ? "target failed" : failure.getMessage();
+            return new Result(target.id(), Status.FAILED, fingerprint, -1, detail);
         }
-        if (lookup.status() == LocalCache.Status.CORRUPT) {
-            return new Result(target.id(), Status.FAILED, fingerprint, -1, "cache integrity check failed");
-        }
-        var execution = executor.run(plan.manifest(), target);
-        if (execution.timedOut()) return new Result(target.id(), Status.TIMEOUT, fingerprint, -1, execution.stderr());
-        if (execution.exitCode() != 0) {
-            return new Result(target.id(), Status.FAILED, fingerprint, execution.exitCode(), execution.stderr());
-        }
-        cache.publish(plan.manifest(), target, fingerprint);
-        return new Result(target.id(), Status.SUCCEEDED, fingerprint, 0, execution.stdout());
     }
 }
