@@ -1,0 +1,9 @@
+{
+  "name": "Forge",
+  "description": "Build and crafting tool",
+  "stack": [
+    "maven"
+  ],
+  "status": "experimental",
+  "primary_language": "Java"
+}
